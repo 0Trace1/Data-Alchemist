@@ -1,103 +1,214 @@
-import Image from "next/image";
+"use client";
+
+import { useState } from "react";
+import { DataGrid, GridColDef } from "@mui/x-data-grid";
+import { read, utils } from "xlsx";
+import { z } from "zod";
+
+const clientSchema = z.object({
+  ClientID: z.string().min(1),
+  ClientName: z.string().min(1),
+  PriorityLevel: z.coerce.number().min(1).max(5),
+  RequestedTaskIDs: z.string(),
+  GroupTag: z.string(),
+  AttributesJSON: z.string().refine((val) => {
+    try {
+      JSON.parse(val);
+      return true;
+    } catch {
+      return false;
+    }
+  }, "Invalid JSON"),
+});
+const workerSchema = z.object({
+  WorkerID: z.string().min(1),
+  WorkerName: z.string().min(1),
+  Skills: z.string(),
+  AvailableSlots: z.string(),
+  MaxLoadPerPhase: z.coerce.number(),
+  WorkerGroup: z.string(),
+  QualificationLevel: z.coerce.number(),
+});
+const taskSchema = z.object({
+  TaskID: z.string(),
+  TaskName: z.string(),
+  Category: z.string(),
+  Duration: z.coerce.number().min(1),
+  RequiredSkills: z.string(),
+  PreferredPhases: z.string(),
+  MaxConcurrent: z.coerce.number(),
+});
+
+type Client = z.infer<typeof clientSchema>;
+type Worker = z.infer<typeof workerSchema>;
+type Task = z.infer<typeof taskSchema>;
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [clients, setClients] = useState<Client[]>([]);
+  const [workers, setWorkers] = useState<Worker[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const data = await file.arrayBuffer();
+    // if(file.type=="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"){}
+
+    const wb = read(data);
+    wb.SheetNames.forEach((worksheet) => {
+      const sheet = wb.Sheets[worksheet];
+      const json: any[] = utils.sheet_to_json(sheet);
+
+      const err: Record<string, string> = {};
+      const name =
+        file.type ==
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          ? worksheet.toLowerCase()
+          : file.name.toLowerCase();
+
+      if (name.includes("client")) {
+        const validated: Client[] = [];
+        json.forEach((row, i) => {
+          const parsed = clientSchema.safeParse(row);
+          if (parsed.success) validated.push(parsed.data);
+          else err[`${i}`] = parsed.error.issues.map((e) => e.message).join("");
+        });
+        setClients(validated);
+      } else if (name.includes("worker")) {
+        const validated: Worker[] = [];
+        json.forEach((row, i) => {
+          const parsed = workerSchema.safeParse(row);
+          if (parsed.success) validated.push(parsed.data);
+          else err[`${i}`] = parsed.error.issues.map((e) => e.message).join("");
+        });
+        setWorkers(validated);
+      } else if (name.includes("tasks")) {
+        const validated: Task[] = [];
+        json.forEach((row, i) => {
+          const parsed = taskSchema.safeParse(row);
+          if (parsed.success) validated.push(parsed.data);
+          else err[`${i}`] = parsed.error.issues.map((e) => e.message).join("");
+        });
+        setTasks(validated);
+      }
+      setErrors(err);
+    });
+  };
+
+  const clientColumns: GridColDef[] = [
+    { field: "ClientID", headerName: "Client ID", width: 120 },
+    { field: "ClientName", headerName: "Name", width: 150 },
+    { field: "PriorityLevel", headerName: "Priority", width: 100 },
+    { field: "RequestedTaskIDs", headerName: "Tasks", width: 180 },
+    { field: "GroupTag", headerName: "Group", width: 100 },
+    { field: "AttributesJSON", headerName: "Attributes JSON", width: 200 },
+  ];
+  const workerColumns: GridColDef[] = [
+    { field: "WorkerID", headerName: "Worker ID", width: 120 },
+    { field: "WorkerName", headerName: "Name", width: 150 },
+    { field: "Skills", headerName: "Skills", width: 180 },
+    { field: "AvailableSlots", headerName: "Slots", width: 160 },
+    { field: "MaxLoadPerPhase", headerName: "Max Load", width: 100 },
+    { field: "WorkerGroup", headerName: "Group", width: 100 },
+    { field: "QualificationLevel", headerName: "Qualification", width: 120 },
+  ];
+
+  const taskColumns: GridColDef[] = [
+    { field: "TaskID", headerName: "Task ID", width: 100 },
+    { field: "TaskName", headerName: "Name", width: 150 },
+    { field: "Category", headerName: "Category", width: 120 },
+    { field: "Duration", headerName: "Duration", width: 100 },
+    { field: "RequiredSkills", headerName: "Skills", width: 160 },
+    { field: "PreferredPhases", headerName: "Phases", width: 140 },
+    { field: "MaxConcurrent", headerName: "Max Concurrent", width: 140 },
+  ];
+  return (
+    <main className="p-6">
+      <h1 className="text-2xl font-bold mb-4">📥 Data Alchemist Starter</h1>
+
+      <input
+        type="file"
+        accept=".csv, .xlsx"
+        onChange={handleFile}
+        className="mb-4"
+      />
+
+      {Object.keys(errors).length > 0 && (
+        <div className="bg-red-100 text-red-700 p-2 mb-4 rounded">
+          <p className="font-semibold">Validation Errors:</p>
+          <ul>
+            {Object.entries(errors).map(([i, msg]) => (
+              <li key={i}>
+                Row {Number(i) + 2}: {msg}
+              </li>
+            ))}
+          </ul>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+      )}
+      {clients.length > 0 && (
+        <>
+          <div className="flex justify-between">
+            <h2 className="font-semibold my-2">Clients</h2>
+            <button
+              onClick={() => {
+                setClients([]);
+              }}
+              className="w-20 border rounded-2xl hover:bg-white hover:text-black cursor-pointer"
+            >
+              Clear
+            </button>
+          </div>
+          <div className="h-[400px] mb-6">
+            <DataGrid
+              rows={clients.map((r, i) => ({ id: i, ...r }))}
+              columns={clientColumns}
+            ></DataGrid>
+          </div>
+        </>
+      )}
+      {workers.length > 0 && (
+        <>
+          <div className="flex justify-between">
+            <h2 className="font-semibold my-2">Workers</h2>
+            <button
+              onClick={() => {
+                setWorkers([]);
+              }}
+              className="w-20 border rounded-2xl hover:bg-white hover:text-black cursor-pointer"
+            >
+              Clear
+            </button>
+          </div>
+          <div className="h-[400px] mb-6">
+            <DataGrid
+              rows={workers.map((r, i) => ({ id: i, ...r }))}
+              columns={workerColumns}
+            ></DataGrid>
+          </div>
+        </>
+      )}
+      {tasks.length > 0 && (
+        <>
+          <div className="flex justify-between">
+            <h2 className="font-semibold my-2">Tasks</h2>
+            <button
+              onClick={() => {
+                setWorkers([]);
+              }}
+              className="w-20 border rounded-2xl hover:bg-white hover:text-black cursor-pointer"
+            >
+              Clear
+            </button>
+          </div>
+          <div className="h-[400px] mb-6">
+            <DataGrid
+              rows={tasks.map((r, i) => ({ id: i, ...r }))}
+              columns={taskColumns}
+            ></DataGrid>
+          </div>
+        </>
+      )}
+    </main>
   );
 }
